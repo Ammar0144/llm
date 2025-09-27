@@ -1,0 +1,36 @@
+name: CI Pipeline (No Testing)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies (No Testing)
+      run: |
+        echo "Installing dependencies without running tests..."
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    # Skip testing phases - Direct build only
+    - name: Build Check (No Tests)
+      run: |
+        echo "Skipping test execution - build only mode"
+        echo "Checking basic syntax without running tests..."
+        python -m py_compile app.py
+        python -m py_compile server.py
+        echo "✅ Build completed without testing phase"

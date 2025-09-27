@@ -1,0 +1,153 @@
+
+name: Deploy LLM Service
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debug connection info
+        run: |
+          echo "🔍 Connection Debug Info:"
+          echo "Host: ${{ secrets.SERVER_HOST }}"
+          echo "User: ${{ secrets.SERVER_USER }}"
+          echo "Port: ${{ secrets.SERVER_PORT }}"
+          echo "SSH Key: [CONFIGURED - Details hidden for security]"
+
+      - name: Copy source code to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "."
+          target: "~/llm-deploy/"
+          port: ${{ secrets.SERVER_PORT }}
+          timeout: 3m
+          overwrite: true
+          rm: true
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT }}
+          timeout: 8m
+          script: |
+            cd ~/llm-deploy
+            
+            echo "🚀 Starting LLM deployment..."
+            
+            # Ensure proper permissions
+            chmod 755 ~/llm-deploy
+            
+            # Create shared Docker network if it doesn't exist
+            docker network create ai-llm-network 2>/dev/null || true
+            
+            # Stop existing container gracefully
+            if docker ps -q -f name=llm-server | grep -q .; then
+              echo "⏹️ Stopping existing LLM container..."
+              docker stop llm-server || true
+              docker rm llm-server || true
+            fi
+            
+            # Backup current image if it exists
+            if docker images llm-server:latest -q | grep -q .; then
+              echo "💾 Backing up current LLM image..."
+              docker tag llm-server:latest llm-server:backup || true
+            fi
+            
+            # Build new image (Docker layer caching makes this fast)
+            echo "🔨 Building new LLM image..."
+            docker build -t llm-server:latest . || {
+              echo "❌ Docker build failed!"
+              exit 1
+            }
+            
+            # Create logs directory
+            mkdir -p ~/llm-deploy/logs
+            chmod 755 ~/llm-deploy/logs
+            
+            # Start new container on shared network
+            echo "🚢 Starting new LLM container..."
+            docker run -d \
+              --name llm-server \
+              --network ai-llm-network \
+              --restart unless-stopped \
+              -p 8082:8082 \
+              -v ~/llm-deploy/logs:/app/logs \
+              -e PYTHONUNBUFFERED=1 \
+              --memory=2g \
+              --cpus=1 \
+              llm-server:latest || {
+              echo "❌ Failed to start LLM container!"
+              exit 1
+            }
+            
+            # Health check with retries
+            echo "🔍 Running LLM health checks..."
+            for i in {1..6}; do
+              sleep 5
+              if curl -f --max-time 10 http://localhost:8082/health; then
+                echo "✅ LLM deployment successful! Service is healthy."
+                docker logs llm-server --tail 5
+                # Cleanup old images
+                docker rmi llm-server:backup 2>/dev/null || true
+                docker image prune -f >/dev/null 2>&1 || true
+                echo "🧹 LLM cleanup completed."
+                echo "🌐 LLM Server available at http://llm-server:8082 (internal network)"
+                echo "🌐 LLM Server available at http://localhost:8082 (external access)"
+                exit 0
+              fi
+              echo "⏳ LLM health check attempt $i/6 failed, retrying..."
+            done
+            
+            # Deployment failed - rollback
+            echo "❌ LLM deployment failed after 6 health check attempts"
+            echo "📋 LLM container logs:"
+            docker logs llm-server --tail 15
+            
+            echo "🔄 Attempting LLM rollback..."
+            docker stop llm-server 2>/dev/null || true
+            docker rm llm-server 2>/dev/null || true
+            
+            if docker images llm-server:backup -q | grep -q .; then
+              echo "🔄 Rolling back to previous LLM version..."
+              docker tag llm-server:backup llm-server:latest
+              docker run -d \
+                --name llm-server \
+                --network ai-llm-network \
+                --restart unless-stopped \
+                -p 8082:8082 \
+                -v ~/llm-deploy/logs:/app/logs \
+                -e PYTHONUNBUFFERED=1 \
+                --memory=2g \
+                --cpus=1 \
+                llm-server:latest
+              
+              sleep 10
+              if curl -f --max-time 10 http://localhost:8082/health; then
+                echo "✅ LLM rollback successful! Previous version restored."
+              else
+                echo "❌ LLM rollback failed! Manual intervention required."
+              fi
+            else
+              echo "❌ No backup LLM image available for rollback"
+            fi
+            
+            exit 1

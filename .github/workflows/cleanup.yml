@@ -1,0 +1,118 @@
+name: Cleanup Old Artifacts
+
+on:
+  schedule:
+    # Run every day at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write  # Required to delete artifacts
+      contents: read
+      
+    steps:
+    - name: Cleanup old artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Get all artifacts
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: owner,
+            repo: repo,
+            per_page: 100
+          });
+          
+          console.log(`Found ${artifacts.data.artifacts.length} artifacts`);
+          
+          // Calculate cutoff date (keep artifacts newer than 7 days)
+          const cutoffDate = new Date();
+          cutoffDate.setDate(cutoffDate.getDate() - 7);
+          
+          let deletedCount = 0;
+          let totalSize = 0;
+          
+          for (const artifact of artifacts.data.artifacts) {
+            const createdAt = new Date(artifact.created_at);
+            const artifactAge = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+            
+            console.log(`Artifact: ${artifact.name}, Created: ${artifact.created_at}, Age: ${artifactAge} days, Size: ${artifact.size_in_bytes} bytes`);
+            
+            // Delete artifacts older than 7 days
+            if (createdAt < cutoffDate) {
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner: owner,
+                  repo: repo,
+                  artifact_id: artifact.id
+                });
+                
+                deletedCount++;
+                totalSize += artifact.size_in_bytes;
+                console.log(`✅ Deleted artifact: ${artifact.name} (${artifact.size_in_bytes} bytes)`);
+              } catch (error) {
+                console.log(`❌ Failed to delete artifact: ${artifact.name} - ${error.message}`);
+              }
+            } else {
+              console.log(`⏭️ Keeping artifact: ${artifact.name} (too recent)`);
+            }
+          }
+          
+          const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2);
+          console.log(`\n📊 Cleanup Summary:`);
+          console.log(`   Artifacts deleted: ${deletedCount}`);
+          console.log(`   Storage freed: ${totalSizeMB} MB`);
+
+    - name: Cleanup workflow runs (keep last 30)
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Get workflow runs
+          const workflows = await github.rest.actions.listRepoWorkflows({
+            owner: owner,
+            repo: repo
+          });
+          
+          for (const workflow of workflows.data.workflows) {
+            console.log(`Checking workflow: ${workflow.name}`);
+            
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: owner,
+              repo: repo,
+              workflow_id: workflow.id,
+              per_page: 100
+            });
+            
+            // Keep the most recent 30 runs for LLM project
+            const runsToDelete = runs.data.workflow_runs.slice(30);
+            
+            console.log(`Found ${runs.data.workflow_runs.length} runs, will delete ${runsToDelete.length}`);
+            
+            for (const run of runsToDelete) {
+              try {
+                await github.rest.actions.deleteWorkflowRun({
+                  owner: owner,
+                  repo: repo,
+                  run_id: run.id
+                });
+                console.log(`✅ Deleted workflow run: ${run.id}`);
+              } catch (error) {
+                console.log(`❌ Failed to delete run ${run.id}: ${error.message}`);
+              }
+            }
+          }
+
+    - name: Summary
+      run: |
+        echo "🧹 LLM project cleanup completed!"
+        echo "   - Deleted artifacts older than 7 days"
+        echo "   - Kept most recent 30 workflow runs"
+        echo "   - Storage quota should be improved"
