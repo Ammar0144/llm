@@ -496,7 +496,16 @@ async def classify_text(request: ClassificationRequest):
             )
         
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        prediction = response_text[len(prompt):].strip().split()[0].lower()
+        
+        # Extract prediction safely
+        after_prompt = response_text[len(prompt):].strip()
+        words = after_prompt.split()
+        
+        # Handle empty response case
+        if not words:
+            prediction = "unknown"  # Default fallback for classification
+        else:
+            prediction = words[0].lower()
         
         # Validate prediction is in provided labels
         valid_prediction = None
@@ -592,7 +601,16 @@ async def analyze_sentiment(request: SentimentRequest):
             )
         
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        sentiment_prediction = response_text[len(prompt):].strip().split()[0].lower()
+        
+        # Extract sentiment prediction safely
+        after_prompt = response_text[len(prompt):].strip()
+        words = after_prompt.split()
+        
+        # Handle empty response case
+        if not words:
+            sentiment_prediction = "neutral"  # Default fallback
+        else:
+            sentiment_prediction = words[0].lower()
         
         # Validate sentiment
         valid_sentiments = ['positive', 'negative', 'neutral']
