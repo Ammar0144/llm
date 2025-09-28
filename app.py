@@ -209,59 +209,121 @@ def load_model():
         raise e
 
 def clean_response(raw_text: str, original_prompt: str) -> str:
-    """Clean and extract the answer from the LLM response"""
+    """
+    Clean and extract the completion from DistilGPT-2 response.
+    DistilGPT-2 generates text completions, so we need to extract the
+    completed text that makes sense as an answer.
+    """
     # Remove the original prompt from the response
     if raw_text.startswith(original_prompt):
-        answer = raw_text[len(original_prompt):].strip()
+        completion = raw_text[len(original_prompt):].strip()
     else:
-        answer = raw_text.strip()
+        completion = raw_text.strip()
     
-    # Split by sentences and clean up
+    if not completion:
+        return "Unable to generate a response."
+    
     import re
     
-    # Remove URLs, email addresses, and other noise
-    answer = re.sub(r'http[s]?://\S+|www\.\S+|\S+@\S+\.\S+', '', answer)
-    answer = re.sub(r'[^\w\s.,!?-]', ' ', answer)
+    # Clean up basic formatting issues
+    completion = re.sub(r'\s+', ' ', completion)  # Normalize whitespace
+    completion = completion.strip()
     
-    # Split by sentences
-    sentences = re.split(r'[.!?]+', answer)
-    cleaned_sentences = []
+    # For DistilGPT-2, take the first logical stopping point
+    # Look for natural sentence endings within reasonable length
+    sentences = re.split(r'([.!?]+)', completion)
     
-    for sentence in sentences[:3]:  # Take first 3 sentences max
-        sentence = sentence.strip()
-        if len(sentence) > 10 and not sentence.startswith('Question'):
-            # Check if sentence makes sense (has both nouns and verbs indicators)
-            words = sentence.lower().split()
-            if len(words) > 3:  # Minimum length check
-                cleaned_sentences.append(sentence)
+    result_parts = []
+    current_length = 0
     
-    if cleaned_sentences:
-        result = '. '.join(cleaned_sentences)
-        if not result.endswith('.'):
+    i = 0
+    while i < len(sentences) and current_length < 100:  # Keep responses concise
+        part = sentences[i].strip()
+        
+        if part and not part in '.!?':
+            # This is actual content, not punctuation
+            words = part.split()
+            
+            # Skip very short fragments or obvious continuations
+            if len(words) >= 3:
+                result_parts.append(part)
+                current_length += len(part)
+                
+                # If we have punctuation after this, add it
+                if i + 1 < len(sentences) and sentences[i + 1] in '.!?':
+                    result_parts.append(sentences[i + 1])
+                    break  # Stop at first complete sentence for clarity
+        i += 1
+    
+    if result_parts:
+        result = ''.join(result_parts).strip()
+        
+        # Ensure proper ending
+        if result and not result[-1] in '.!?':
             result += '.'
+            
+        # Remove any trailing incomplete thoughts
+        result = re.sub(r'\s+and\s*$', '.', result)
+        result = re.sub(r'\s+but\s*$', '.', result)
+        result = re.sub(r'\s+or\s*$', '.', result)
+        
         return result
     
-    # Fallback: try to extract meaningful content
-    lines = answer.split('\n')
-    for line in lines:
-        line = line.strip()
-        if len(line) > 15 and 'http' not in line.lower():
-            return line + ('.' if not line.endswith('.') else '')
+    # If no good sentences found, take the first reasonable chunk
+    words = completion.split()
+    if len(words) >= 5:
+        # Take first 15 words and add period
+        return ' '.join(words[:15]) + '.'
     
-    return "I apologize, but I couldn't generate a clear answer to that question."
+    return "Unable to generate a clear response."
 
 def format_question_prompt(question: str) -> str:
-    """Format the user question into an effective prompt for the LLM"""
-    # Add more context and examples to guide the model
-    if "what is" in question.lower():
-        prompt = f"{question}\n\n{question.replace('What is', '').replace('what is', '').strip()} is"
-    elif "how does" in question.lower() or "how do" in question.lower():
-        prompt = f"{question}\n\nTo understand this, "
-    elif "why" in question.lower():
-        prompt = f"{question}\n\nThe reason is that "
+    """
+    Format questions as text completion prompts for DistilGPT-2.
+    DistilGPT-2 is a text generation model, not a Q&A model, so we need
+    to format questions as text that it can naturally complete.
+    """
+    question_lower = question.lower().strip()
+    
+    # Remove question marks to make it more completion-friendly
+    clean_question = question.rstrip('?').strip()
+    
+    # Format based on question type for better completion
+    if question_lower.startswith(("what is", "what are")):
+        # Convert "What is X?" to "X is a"
+        topic = clean_question[7:].strip() if question_lower.startswith("what is") else clean_question[8:].strip()
+        if topic:
+            prompt = f"{topic.title()} is a"
+        else:
+            prompt = f"The answer to '{clean_question}' is that"
+    
+    elif question_lower.startswith(("how does", "how do", "how to")):
+        # Convert "How does X work?" to "X works by"
+        if "how does" in question_lower:
+            topic = clean_question[8:].strip()
+            prompt = f"To understand {topic}, it works by"
+        else:
+            prompt = f"The process involves"
+    
+    elif question_lower.startswith(("why", "why is", "why do", "why does")):
+        # Convert "Why is X?" to "The reason X is because"
+        topic = clean_question[3:].strip() if question_lower.startswith("why ") else clean_question
+        prompt = f"The reason this happens is because"
+    
+    elif question_lower.startswith(("where", "when", "who")):
+        # Convert to completion format
+        prompt = f"The answer is"
+    
+    elif "capital" in question_lower and "france" in question_lower:
+        # Specific case for capital questions
+        prompt = "The capital of France is"
+    
+    elif "benefits" in question_lower:
+        prompt = f"The main benefits include"
+    
     else:
-        # Default format with better context
-        prompt = f"Please explain: {question}\n\nExplanation: "
+        # Generic format - create a context that encourages factual completion
+        prompt = f"Here's what you need to know about {clean_question.lower()}: It"
     
     return prompt
 
@@ -323,20 +385,21 @@ async def ask_question(request: QuestionRequest):
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
         
-        # Generate response with optimized parameters for Q&A
+        # Generate response with parameters optimized for factual completion
         with torch.no_grad():
             outputs = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_length=request.max_length,
-                temperature=0.7,
-                top_p=0.9,
+                max_new_tokens=50,  # Focus on completing the thought, not generating long text
+                temperature=0.2,    # Lower temperature for more factual, focused responses
+                top_p=0.8,         # Slightly more focused sampling
                 do_sample=True,
-                repetition_penalty=1.3,
-                no_repeat_ngram_size=3,
+                repetition_penalty=1.1,  # Lighter penalty to allow natural repetition
+                no_repeat_ngram_size=2,  # Allow some repetition for natural flow
                 pad_token_id=tokenizer.eos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
-                num_return_sequences=1
+                num_return_sequences=1,
+                early_stopping=True
             )
         
         # Decode the raw response
@@ -476,9 +539,9 @@ async def classify_text(request: ClassificationRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        # Single clear prompt for LLM model
-        labels_str = ", ".join(request.labels)
-        prompt = f"Classify this text into one of these categories: {labels_str}\nText: {request.text}\nCategory:"
+        # Format as completion for DistilGPT-2
+        labels_str = " or ".join(request.labels)
+        prompt = f"The text '{request.text}' is classified as"
         
         inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
@@ -486,13 +549,14 @@ async def classify_text(request: ClassificationRequest):
             outputs = model.generate(
                 inputs['input_ids'],
                 attention_mask=inputs['attention_mask'],
-                max_length=len(inputs['input_ids'][0]) + 10,
-                temperature=0.3,
-                top_p=0.9,
+                max_new_tokens=8,   # Just need a few tokens for classification
+                temperature=0.1,    # Very low for consistent classification
+                top_p=0.7,
                 do_sample=True,
-                repetition_penalty=1.2,
+                repetition_penalty=1.1,
                 pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id
+                eos_token_id=tokenizer.eos_token_id,
+                early_stopping=True
             )
         
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -529,7 +593,8 @@ async def summarize_text(request: SummarizationRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        prompt = f"Summarize the following text:\n{request.text}\nSummary:"
+        # Format as completion - DistilGPT-2 works better with natural continuations
+        prompt = f"In summary, the key points of '{request.text[:100]}...' are:"
         
         inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
@@ -537,14 +602,15 @@ async def summarize_text(request: SummarizationRequest):
             outputs = model.generate(
                 inputs['input_ids'],
                 attention_mask=inputs['attention_mask'],
-                max_length=request.max_length,
-                temperature=0.5,
-                top_p=0.9,
+                max_new_tokens=50,  # Concise summaries
+                temperature=0.3,    # Lower for more focused summaries
+                top_p=0.8,
                 do_sample=True,
                 repetition_penalty=1.2,
                 no_repeat_ngram_size=2,
                 pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id
+                eos_token_id=tokenizer.eos_token_id,
+                early_stopping=True
             )
         
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -577,8 +643,8 @@ async def analyze_sentiment(request: SentimentRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        # Simple, clear prompt for the LLM model
-        prompt = f"Analyze the sentiment of this text: '{request.text}'\nSentiment:"
+        # Format as completion task - DistilGPT-2 works better with completion prompts
+        prompt = f"The sentiment of the text '{request.text}' is"
         
         inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
@@ -586,13 +652,14 @@ async def analyze_sentiment(request: SentimentRequest):
             outputs = model.generate(
                 inputs['input_ids'],
                 attention_mask=inputs['attention_mask'],
-                max_length=len(inputs['input_ids'][0]) + 10,
-                temperature=0.3,
-                top_p=0.9,
+                max_new_tokens=5,  # Just need a few tokens for sentiment
+                temperature=0.1,   # Very low for consistent sentiment classification
+                top_p=0.7,
                 do_sample=True,
-                repetition_penalty=1.2,
+                repetition_penalty=1.1,
                 pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id
+                eos_token_id=tokenizer.eos_token_id,
+                early_stopping=True
             )
         
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
