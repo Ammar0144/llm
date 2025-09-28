@@ -4,7 +4,7 @@ Provides endpoints for text generation using a lightweight GPT-2 model.
 """
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
