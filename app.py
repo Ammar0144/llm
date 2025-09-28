@@ -470,15 +470,15 @@ async def chat_completions(request: ChatCompletionRequest):
 
 @app.post("/classify", response_model=ClassificationResponse)
 async def classify_text(request: ClassificationRequest):
-    """Classify text into provided labels"""
+    """Classify text into provided labels with improved LLM handling"""
     
     if model is None or tokenizer is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        # Create classification prompt
+        # Single clear prompt for LLM model
         labels_str = ", ".join(request.labels)
-        prompt = f"Classify the following text into one of these categories: {labels_str}\nText: {request.text}\nCategory:"
+        prompt = f"Classify this text into one of these categories: {labels_str}\nText: {request.text}\nCategory:"
         
         inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
@@ -486,7 +486,7 @@ async def classify_text(request: ClassificationRequest):
             outputs = model.generate(
                 inputs['input_ids'],
                 attention_mask=inputs['attention_mask'],
-                max_length=len(inputs['input_ids'][0]) + 20,
+                max_length=len(inputs['input_ids'][0]) + 10,
                 temperature=0.3,
                 top_p=0.9,
                 do_sample=True,
@@ -496,31 +496,25 @@ async def classify_text(request: ClassificationRequest):
             )
         
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Extract prediction safely
         after_prompt = response_text[len(prompt):].strip()
         words = after_prompt.split()
         
-        # Handle empty response case
-        if not words:
-            prediction = "unknown"  # Default fallback for classification
-        else:
+        # Find matching label from model response
+        best_match = None
+        if words:
             prediction = words[0].lower()
+            for label in request.labels:
+                if label.lower() in prediction:
+                    best_match = label.lower()
+                    break
         
-        # Validate prediction is in provided labels
-        valid_prediction = None
-        for label in request.labels:
-            if label.lower() in prediction:
-                valid_prediction = label.lower()
-                break
-        
-        if not valid_prediction:
-            # Fallback: use first label
-            valid_prediction = request.labels[0].lower()
+        # Use first label as fallback if model doesn't match any
+        if not best_match:
+            best_match = request.labels[0].lower()
         
         return ClassificationResponse(
             text=request.text,
-            prediction=valid_prediction
+            prediction=best_match
         )
         
     except Exception as e:
@@ -577,49 +571,50 @@ async def summarize_text(request: SummarizationRequest):
 
 @app.post("/sentiment", response_model=SentimentResponse)
 async def analyze_sentiment(request: SentimentRequest):
-    """Analyze sentiment of the provided text using rule-based approach with keyword scoring"""
+    """Analyze sentiment using pure LLM model response"""
+    
+    if model is None or tokenizer is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        # Rule-based sentiment analysis with keyword scoring
-        text_lower = request.text.lower()
+        # Simple, clear prompt for the LLM model
+        prompt = f"Analyze the sentiment of this text: '{request.text}'\nSentiment:"
         
-        # Positive keywords with weights
-        positive_words = {
-            'amazing': 3, 'wonderful': 3, 'fantastic': 3, 'excellent': 3, 'perfect': 3,
-            'great': 2, 'good': 2, 'happy': 2, 'love': 2, 'best': 2, 'awesome': 3,
-            'brilliant': 3, 'outstanding': 3, 'superb': 3, 'marvelous': 3, 'delighted': 2,
-            'pleased': 2, 'satisfied': 2, 'enjoy': 2, 'nice': 1, 'fine': 1, 'ok': 0.5,
-            'beautiful': 2, 'sweet': 2, 'wonderful': 3, 'incredible': 3, 'magnificent': 3
-        }
+        inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
         
-        # Negative keywords with weights
-        negative_words = {
-            'terrible': 3, 'awful': 3, 'horrible': 3, 'disgusting': 3, 'worst': 3,
-            'bad': 2, 'hate': 2, 'angry': 2, 'sad': 2, 'disappointed': 2, 'upset': 2,
-            'frustrated': 2, 'annoyed': 2, 'furious': 3, 'outraged': 3, 'dreadful': 3,
-            'pathetic': 3, 'useless': 2, 'poor': 1, 'wrong': 1, 'failed': 2, 'broken': 2,
-            'nasty': 2, 'ugly': 2, 'stupid': 2, 'ridiculous': 2, 'appalling': 3
-        }
+        with torch.no_grad():
+            outputs = model.generate(
+                inputs['input_ids'],
+                attention_mask=inputs['attention_mask'],
+                max_length=len(inputs['input_ids'][0]) + 10,
+                temperature=0.3,
+                top_p=0.9,
+                do_sample=True,
+                repetition_penalty=1.2,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id
+            )
         
-        # Calculate sentiment scores
-        positive_score = 0
-        negative_score = 0
+        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        words = text_lower.split()
+        # Extract model's response
+        after_prompt = response_text[len(prompt):].strip()
+        words = after_prompt.split()
         
-        for word in words:
-            if word in positive_words:
-                positive_score += positive_words[word]
-            if word in negative_words:
-                negative_score += negative_words[word]
-        
-        # Determine sentiment based on scores
-        if positive_score > negative_score and positive_score >= 1:
-            final_sentiment = 'positive'
-        elif negative_score > positive_score and negative_score >= 1:
-            final_sentiment = 'negative'
+        # Use model's first word as sentiment, validate against expected values
+        if not words:
+            sentiment_prediction = "neutral"  # Only if model produces no output
         else:
-            final_sentiment = 'neutral'
+            sentiment_prediction = words[0].lower()
+        
+        # Ensure response is one of valid sentiments
+        valid_sentiments = ['positive', 'negative', 'neutral']
+        final_sentiment = 'neutral'  # default only if invalid
+        
+        for sentiment in valid_sentiments:
+            if sentiment in sentiment_prediction:
+                final_sentiment = sentiment
+                break
         
         return SentimentResponse(
             text=request.text,
