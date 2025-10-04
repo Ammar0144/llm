@@ -1,6 +1,8 @@
-# DistilGPT-2 LLM Server API Examples
+# DistilGPT-2 Streamlined API Examples
 
-## Starting the Server
+> **Note**: This API has been optimized to focus on DistilGPT-2's core strengths: text generation, completion, and chat conversations.
+
+## 🚀 Starting the Server
 
 ```bash
 # Method 1: Direct Python
@@ -9,14 +11,24 @@ python server.py
 # Method 2: Using setup script
 ./setup.sh
 
-# Method 3: Using Docker
+# Method 3: Using Docker (Recommended)
 docker-compose up
 
 # Method 4: Using FastAPI directly
 uvicorn app:app --host 0.0.0.0 --port 8082
 ```
 
-## API Usage Examples
+## 📋 Available Endpoints
+
+| Endpoint | Purpose | Strength |
+|----------|---------|----------|
+| `GET /health` | Service health check | ✅ Always |
+| `GET /model-info` | Model information | ✅ Always |
+| `POST /generate` | Text generation | ⭐⭐⭐⭐⭐ Primary |
+| `POST /complete` | Text completion | ⭐⭐⭐⭐⭐ Primary |
+| `POST /chat/completions` | OpenAI-style chat | ⭐⭐⭐⭐ Good |
+
+## 🔧 API Usage Examples
 
 ### Health Check
 ```bash
@@ -28,7 +40,11 @@ Response:
 {
   "status": "healthy",
   "model_loaded": true,
-  "model_name": "distilgpt2"
+  "model_name": "distilgpt2",
+  "security": {
+    "access_control_enabled": true,
+    "client_ip": "127.0.0.1"
+  }
 }
 ```
 
@@ -41,13 +57,21 @@ Response:
 ```json
 {
   "model_name": "distilgpt2",
-  "model_type": "GPT-2",
+  "model_type": "GPT-2", 
   "model_size": "82M parameters",
-  "description": "DistilGPT-2 is a distilled version of GPT-2 that is smaller and faster while maintaining good performance"
+  "description": "DistilGPT-2 optimized for text generation and completion tasks",
+  "supported_endpoints": [
+    "/generate - Text generation (primary strength)",
+    "/complete - Text completion (primary strength)", 
+    "/chat/completions - Chat-style conversations"
+  ],
+  "optimized_for": ["text_generation", "text_completion", "chat_conversations"]
 }
 ```
 
-### Text Generation
+## ⭐ Primary Endpoints (Best Performance)
+
+### 1. Text Generation
 ```bash
 curl -X POST "http://localhost:8082/generate" \
      -H "Content-Type: application/json" \
@@ -60,71 +84,166 @@ curl -X POST "http://localhost:8082/generate" \
      }'
 ```
 
+### 2. Text Completion (NEW - Optimized)
+```bash
+curl -X POST "http://localhost:8082/complete" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "prompt": "The benefits of renewable energy include",
+       "max_tokens": 100,
+       "temperature": 0.7
+     }'
+```
+
 Response:
 ```json
 {
-  "generated_text": "The future of artificial intelligence is bright and full of possibilities. As technology continues to advance, we can expect to see more sophisticated AI systems that can help solve complex problems and improve our daily lives.",
-  "prompt": "The future of artificial intelligence is"
+  "prompt": "The benefits of renewable energy include",
+  "completion": "reduced carbon emissions, lower long-term energy costs, improved energy security, and job creation in green technology sectors.",
+  "raw_response": "The benefits of renewable energy include reduced carbon emissions, lower long-term energy costs, improved energy security, and job creation in green technology sectors."
 }
 ```
 
-### Simple Text Generation
+### 3. Chat Completions (OpenAI Compatible)
 ```bash
-curl -X POST "http://localhost:8082/generate" \
+curl -X POST "http://localhost:8082/chat/completions" \
      -H "Content-Type: application/json" \
-     -d '{"prompt": "Once upon a time"}'
+     -d '{
+       "messages": [
+         {"role": "user", "content": "Tell me about machine learning"}
+       ],
+       "max_tokens": 100,
+       "temperature": 0.7
+     }'
 ```
 
-### Creative Writing Example
+Response:
+```json
+{
+  "content": "Machine learning is a branch of artificial intelligence that enables computers to learn and improve from experience without being explicitly programmed for every task.",
+  "role": "assistant"
+}
+```
+
+## 🎨 Use Case Examples
+
+### Creative Writing
 ```bash
 curl -X POST "http://localhost:8082/generate" \
      -H "Content-Type: application/json" \
      -d '{
-       "prompt": "In a world where robots and humans coexist",
+       "prompt": "In a world where dragons still exist",
        "max_length": 150,
        "temperature": 0.8,
        "top_p": 0.95
      }'
 ```
 
-### Technical Content Example
+### Technical Content
 ```bash
-curl -X POST "http://localhost:8082/generate" \
+curl -X POST "http://localhost:8082/complete" \
      -H "Content-Type: application/json" \
      -d '{
-       "prompt": "Machine learning is a subset of artificial intelligence that",
-       "max_length": 80,
-       "temperature": 0.5,
-       "top_p": 0.9
+       "prompt": "Neural networks work by",
+       "max_tokens": 80,
+       "temperature": 0.5
      }'
 ```
 
-## Python Client Example
+## 🐍 Python Client Examples
 
+### Complete Client with All Endpoints
 ```python
 import requests
 import json
 
-def generate_text(prompt, max_length=100, temperature=0.7):
-    url = "http://localhost:8082/generate"
+class DistilGPT2Client:
+    def __init__(self, base_url="http://localhost:8082"):
+        self.base_url = base_url
+    
+    def health_check(self):
+        """Check if server is healthy"""
+        response = requests.get(f"{self.base_url}/health")
+        return response.json() if response.status_code == 200 else None
+    
+    def get_model_info(self):
+        """Get model information"""
+        response = requests.get(f"{self.base_url}/model-info")
+        return response.json() if response.status_code == 200 else None
+    
+    def generate_text(self, prompt, max_length=100, temperature=0.7, top_p=0.9):
+        """Generate text using the /generate endpoint"""
+        payload = {
+            "prompt": prompt,
+            "max_length": max_length,
+            "temperature": temperature,
+            "top_p": top_p,
+            "do_sample": True
+        }
+        response = requests.post(f"{self.base_url}/generate", json=payload)
+        return response.json() if response.status_code == 200 else {"error": response.text}
+    
+    def complete_text(self, prompt, max_tokens=100, temperature=0.7):
+        """Complete text using the /complete endpoint (optimized for DistilGPT-2)"""
+        payload = {
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "temperature": temperature
+        }
+        response = requests.post(f"{self.base_url}/complete", json=payload)
+        return response.json() if response.status_code == 200 else {"error": response.text}
+    
+    def chat_completion(self, messages, max_tokens=100, temperature=0.7):
+        """Create chat completion using OpenAI-compatible endpoint"""
+        payload = {
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature
+        }
+        response = requests.post(f"{self.base_url}/chat/completions", json=payload)
+        return response.json() if response.status_code == 200 else {"error": response.text}
+
+# Usage Examples
+client = DistilGPT2Client()
+
+# Test server health
+health = client.health_check()
+print(f"Server status: {health['status']}")
+
+# Text completion (recommended for DistilGPT-2)
+completion = client.complete_text("The future of AI is")
+print(f"Completion: {completion['completion']}")
+
+# Text generation
+generation = client.generate_text("Once upon a time")
+print(f"Generated: {generation['generated_text']}")
+
+# Chat completion
+chat_response = client.chat_completion([
+    {"role": "user", "content": "What is machine learning?"}
+])
+print(f"Chat: {chat_response['content']}")
+```
+
+### Simple Usage Functions
+```python
+import requests
+
+def complete_text(prompt, max_tokens=100, temperature=0.7):
+    """Simple text completion function"""
+    url = "http://localhost:8082/complete"
     payload = {
         "prompt": prompt,
-        "max_length": max_length,
-        "temperature": temperature,
-        "top_p": 0.9,
-        "do_sample": True
+        "max_tokens": max_tokens,
+        "temperature": temperature
     }
-    
     response = requests.post(url, json=payload)
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        return {"error": response.text}
+    return response.json() if response.status_code == 200 else None
 
-# Usage
-result = generate_text("The benefits of renewable energy include")
-print(result["generated_text"])
+# Quick usage
+result = complete_text("The benefits of renewable energy include")
+if result:
+    print(result["completion"])
 ```
 
 ## JavaScript/Node.js Client Example

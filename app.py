@@ -34,6 +34,7 @@ ALLOWED_IPS = [
     "172.18.0.0/16",      # Docker custom networks
     "172.19.0.0/16",      # Docker custom networks
     "172.20.0.0/16",      # Docker custom networks
+    "172.65.0.0/16",      # Docker Desktop network range
     "10.0.0.0/8",         # Private network range
     "192.168.0.0/16"      # Private network range
 ]
@@ -132,13 +133,14 @@ class TextGenerationResponse(BaseModel):
     generated_text: str
     prompt: str
 
-class QuestionRequest(BaseModel):
-    question: str
-    max_length: Optional[int] = 150
+class CompletionRequest(BaseModel):
+    prompt: str
+    max_tokens: Optional[int] = 100
+    temperature: Optional[float] = 0.7
 
-class QuestionResponse(BaseModel):
-    question: str
-    answer: str
+class CompletionResponse(BaseModel):
+    prompt: str
+    completion: str
     raw_response: str
 
 class ChatMessage(BaseModel):
@@ -154,38 +156,7 @@ class ChatCompletionResponse(BaseModel):
     content: str
     role: str = "assistant"
 
-class ClassificationRequest(BaseModel):
-    text: str
-    labels: List[str]
 
-class ClassificationResponse(BaseModel):
-    text: str
-    prediction: str
-    confidence: Optional[float] = None
-
-class SummarizationRequest(BaseModel):
-    text: str
-    max_length: Optional[int] = 100
-
-class SummarizationResponse(BaseModel):
-    summary: str
-    original_text: str
-
-class SentimentRequest(BaseModel):
-    text: str
-
-class SentimentResponse(BaseModel):
-    text: str
-    sentiment: str
-    confidence: Optional[float] = None
-
-class EmbeddingsRequest(BaseModel):
-    text: str
-
-class EmbeddingsResponse(BaseModel):
-    embeddings: str
-    text: str
-    method: str = "llm_generated"
 
 def load_model():
     """Load the DistilGPT-2 model and tokenizer"""
@@ -208,124 +179,9 @@ def load_model():
         logger.error(f"Error loading model: {e}")
         raise e
 
-def clean_response(raw_text: str, original_prompt: str) -> str:
-    """
-    Clean and extract the completion from DistilGPT-2 response.
-    DistilGPT-2 generates text completions, so we need to extract the
-    completed text that makes sense as an answer.
-    """
-    # Remove the original prompt from the response
-    if raw_text.startswith(original_prompt):
-        completion = raw_text[len(original_prompt):].strip()
-    else:
-        completion = raw_text.strip()
-    
-    if not completion:
-        return "Unable to generate a response."
-    
-    import re
-    
-    # Clean up basic formatting issues
-    completion = re.sub(r'\s+', ' ', completion)  # Normalize whitespace
-    completion = completion.strip()
-    
-    # For DistilGPT-2, take the first logical stopping point
-    # Look for natural sentence endings within reasonable length
-    sentences = re.split(r'([.!?]+)', completion)
-    
-    result_parts = []
-    current_length = 0
-    
-    i = 0
-    while i < len(sentences) and current_length < 100:  # Keep responses concise
-        part = sentences[i].strip()
-        
-        if part and not part in '.!?':
-            # This is actual content, not punctuation
-            words = part.split()
-            
-            # Skip very short fragments or obvious continuations
-            if len(words) >= 3:
-                result_parts.append(part)
-                current_length += len(part)
-                
-                # If we have punctuation after this, add it
-                if i + 1 < len(sentences) and sentences[i + 1] in '.!?':
-                    result_parts.append(sentences[i + 1])
-                    break  # Stop at first complete sentence for clarity
-        i += 1
-    
-    if result_parts:
-        result = ''.join(result_parts).strip()
-        
-        # Ensure proper ending
-        if result and not result[-1] in '.!?':
-            result += '.'
-            
-        # Remove any trailing incomplete thoughts
-        result = re.sub(r'\s+and\s*$', '.', result)
-        result = re.sub(r'\s+but\s*$', '.', result)
-        result = re.sub(r'\s+or\s*$', '.', result)
-        
-        return result
-    
-    # If no good sentences found, take the first reasonable chunk
-    words = completion.split()
-    if len(words) >= 5:
-        # Take first 15 words and add period
-        return ' '.join(words[:15]) + '.'
-    
-    return "Unable to generate a clear response."
 
-def format_question_prompt(question: str) -> str:
-    """
-    Format questions as text completion prompts for DistilGPT-2.
-    DistilGPT-2 is a text generation model, not a Q&A model, so we need
-    to format questions as text that it can naturally complete.
-    """
-    question_lower = question.lower().strip()
-    
-    # Remove question marks to make it more completion-friendly
-    clean_question = question.rstrip('?').strip()
-    
-    # Format based on question type for better completion
-    if question_lower.startswith(("what is", "what are")):
-        # Convert "What is X?" to "X is a"
-        topic = clean_question[7:].strip() if question_lower.startswith("what is") else clean_question[8:].strip()
-        if topic:
-            prompt = f"{topic.title()} is a"
-        else:
-            prompt = f"The answer to '{clean_question}' is that"
-    
-    elif question_lower.startswith(("how does", "how do", "how to")):
-        # Convert "How does X work?" to "X works by"
-        if "how does" in question_lower:
-            topic = clean_question[8:].strip()
-            prompt = f"To understand {topic}, it works by"
-        else:
-            prompt = f"The process involves"
-    
-    elif question_lower.startswith(("why", "why is", "why do", "why does")):
-        # Convert "Why is X?" to "The reason X is because"
-        topic = clean_question[3:].strip() if question_lower.startswith("why ") else clean_question
-        prompt = f"The reason this happens is because"
-    
-    elif question_lower.startswith(("where", "when", "who")):
-        # Convert to completion format
-        prompt = f"The answer is"
-    
-    elif "capital" in question_lower and "france" in question_lower:
-        # Specific case for capital questions
-        prompt = "The capital of France is"
-    
-    elif "benefits" in question_lower:
-        prompt = f"The main benefits include"
-    
-    else:
-        # Generic format - create a context that encourages factual completion
-        prompt = f"Here's what you need to know about {clean_question.lower()}: It"
-    
-    return prompt
+
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -362,20 +218,20 @@ async def health_check(request: Request):
         "service": "LLM Server - Internal Use Only"
     }
 
-@app.post("/ask", response_model=QuestionResponse)
-async def ask_question(request: QuestionRequest):
-    """Intelligent question-answering endpoint with response cleaning"""
+@app.post("/complete", response_model=CompletionResponse)
+async def complete_text(request: CompletionRequest):
+    """Text completion endpoint - DistilGPT-2's core strength"""
     
     if model is None or tokenizer is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        # Format the question into an effective prompt
-        formatted_prompt = format_question_prompt(request.question)
+        # Use the user's prompt directly - this is what DistilGPT-2 does best
+        prompt = request.prompt.strip()
         
         # Tokenize input with proper attention mask
         inputs = tokenizer(
-            formatted_prompt, 
+            prompt, 
             return_tensors="pt", 
             padding=True, 
             truncation=True,
@@ -385,17 +241,17 @@ async def ask_question(request: QuestionRequest):
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
         
-        # Generate response with parameters optimized for factual completion
+        # Generate completion using user-specified parameters
         with torch.no_grad():
             outputs = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_new_tokens=50,  # Focus on completing the thought, not generating long text
-                temperature=0.2,    # Lower temperature for more factual, focused responses
-                top_p=0.8,         # Slightly more focused sampling
+                max_new_tokens=request.max_tokens,
+                temperature=request.temperature,
+                top_p=0.9,
                 do_sample=True,
-                repetition_penalty=1.1,  # Lighter penalty to allow natural repetition
-                no_repeat_ngram_size=2,  # Allow some repetition for natural flow
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=2,
                 pad_token_id=tokenizer.eos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
                 num_return_sequences=1,
@@ -405,18 +261,18 @@ async def ask_question(request: QuestionRequest):
         # Decode the raw response
         raw_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        # Clean and extract the answer
-        clean_answer = clean_response(raw_response, formatted_prompt)
+        # Extract just the completion part (remove the original prompt)
+        completion = raw_response[len(prompt):].strip()
         
-        return QuestionResponse(
-            question=request.question,
-            answer=clean_answer,
+        return CompletionResponse(
+            prompt=request.prompt,
+            completion=completion,
             raw_response=raw_response
         )
         
     except Exception as e:
-        logger.error(f"Error processing question: {e}")
-        raise HTTPException(status_code=500, detail=f"Question processing failed: {str(e)}")
+        logger.error(f"Error processing completion: {e}")
+        raise HTTPException(status_code=500, detail=f"Text completion failed: {str(e)}")
 
 @app.post("/generate", response_model=TextGenerationResponse)
 async def generate_text(request: TextGenerationRequest):
@@ -477,7 +333,16 @@ async def model_info():
         "model_name": "distilgpt2",
         "model_type": "GPT-2",
         "model_size": "82M parameters",
-        "description": "DistilGPT-2 is a distilled version of GPT-2 that is smaller and faster while maintaining good performance"
+        "description": "DistilGPT-2 optimized for text generation and completion tasks",
+        "supported_endpoints": [
+            "/generate - Text generation (primary strength)",
+            "/complete - Text completion (primary strength)", 
+            "/chat/completions - Chat-style conversations",
+            "/health - Service health check",
+            "/ - Basic status"
+        ],
+        "optimized_for": ["text_generation", "text_completion", "chat_conversations"],
+        "note": "This API is streamlined to focus on DistilGPT-2's core capabilities"
     }
 
 @app.post("/chat/completions", response_model=ChatCompletionResponse)
@@ -530,218 +395,6 @@ async def chat_completions(request: ChatCompletionRequest):
     except Exception as e:
         logger.error(f"Error in chat completion: {e}")
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {str(e)}")
-
-@app.post("/classify", response_model=ClassificationResponse)
-async def classify_text(request: ClassificationRequest):
-    """Classify text into provided labels with improved LLM handling"""
-    
-    if model is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    try:
-        # Format as completion for DistilGPT-2
-        labels_str = " or ".join(request.labels)
-        prompt = f"The text '{request.text}' is classified as"
-        
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        
-        with torch.no_grad():
-            outputs = model.generate(
-                inputs['input_ids'],
-                attention_mask=inputs['attention_mask'],
-                max_new_tokens=8,   # Just need a few tokens for classification
-                temperature=0.1,    # Very low for consistent classification
-                top_p=0.7,
-                do_sample=True,
-                repetition_penalty=1.1,
-                pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                early_stopping=True
-            )
-        
-        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        after_prompt = response_text[len(prompt):].strip()
-        words = after_prompt.split()
-        
-        # Find matching label from model response
-        best_match = None
-        if words:
-            prediction = words[0].lower()
-            for label in request.labels:
-                if label.lower() in prediction:
-                    best_match = label.lower()
-                    break
-        
-        # Use first label as fallback if model doesn't match any
-        if not best_match:
-            best_match = request.labels[0].lower()
-        
-        return ClassificationResponse(
-            text=request.text,
-            prediction=best_match
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in classification: {e}")
-        raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
-
-@app.post("/summarize", response_model=SummarizationResponse)
-async def summarize_text(request: SummarizationRequest):
-    """Summarize the provided text"""
-    
-    if model is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    try:
-        # Format as completion - DistilGPT-2 works better with natural continuations
-        prompt = f"In summary, the key points of '{request.text[:100]}...' are:"
-        
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        
-        with torch.no_grad():
-            outputs = model.generate(
-                inputs['input_ids'],
-                attention_mask=inputs['attention_mask'],
-                max_new_tokens=50,  # Concise summaries
-                temperature=0.3,    # Lower for more focused summaries
-                top_p=0.8,
-                do_sample=True,
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=2,
-                pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                early_stopping=True
-            )
-        
-        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        summary = response_text[len(prompt):].strip()
-        
-        # Clean up summary
-        if summary:
-            # Take first sentence or two
-            sentences = summary.split('.')
-            clean_summary = '. '.join(sentences[:2]).strip()
-            if clean_summary and not clean_summary.endswith('.'):
-                clean_summary += '.'
-        else:
-            clean_summary = "Summary not available."
-        
-        return SummarizationResponse(
-            summary=clean_summary,
-            original_text=request.text
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in summarization: {e}")
-        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
-
-@app.post("/sentiment", response_model=SentimentResponse)
-async def analyze_sentiment(request: SentimentRequest):
-    """Analyze sentiment using pure LLM model response"""
-    
-    if model is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    try:
-        # Format as completion task - DistilGPT-2 works better with completion prompts
-        prompt = f"The sentiment of the text '{request.text}' is"
-        
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        
-        with torch.no_grad():
-            outputs = model.generate(
-                inputs['input_ids'],
-                attention_mask=inputs['attention_mask'],
-                max_new_tokens=5,  # Just need a few tokens for sentiment
-                temperature=0.1,   # Very low for consistent sentiment classification
-                top_p=0.7,
-                do_sample=True,
-                repetition_penalty=1.1,
-                pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                early_stopping=True
-            )
-        
-        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Extract model's response
-        after_prompt = response_text[len(prompt):].strip()
-        words = after_prompt.split()
-        
-        # Use model's first word as sentiment, validate against expected values
-        if not words:
-            sentiment_prediction = "neutral"  # Only if model produces no output
-        else:
-            sentiment_prediction = words[0].lower()
-        
-        # Ensure response is one of valid sentiments
-        valid_sentiments = ['positive', 'negative', 'neutral']
-        final_sentiment = 'neutral'  # default only if invalid
-        
-        for sentiment in valid_sentiments:
-            if sentiment in sentiment_prediction:
-                final_sentiment = sentiment
-                break
-        
-        return SentimentResponse(
-            text=request.text,
-            sentiment=final_sentiment
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in sentiment analysis: {e}")
-        raise HTTPException(status_code=500, detail=f"Sentiment analysis failed: {str(e)}")
-
-@app.post("/embeddings", response_model=EmbeddingsResponse)
-async def generate_embeddings(request: EmbeddingsRequest):
-    """Generate text embeddings using LLM-based approach"""
-    
-    if model is None or tokenizer is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    try:
-        # Since we don't have a dedicated embedding model, we'll use the LLM to generate
-        # a semantic representation of the text
-        prompt = f"Generate a semantic representation and key concepts for the following text:\nText: {request.text}\nSemantic representation:"
-        
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        
-        with torch.no_grad():
-            outputs = model.generate(
-                inputs['input_ids'],
-                attention_mask=inputs['attention_mask'],
-                max_length=150,
-                temperature=0.3,
-                top_p=0.9,
-                do_sample=True,
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=2,
-                pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id
-            )
-        
-        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        embeddings_representation = response_text[len(prompt):].strip()
-        
-        # Clean up the embeddings representation
-        if embeddings_representation:
-            # Take the first meaningful sentence
-            sentences = embeddings_representation.split('.')
-            clean_repr = sentences[0].strip()
-            if len(clean_repr) < 10:
-                clean_repr = embeddings_representation[:100].strip()
-        else:
-            clean_repr = f"Semantic representation of: {request.text[:50]}..."
-        
-        return EmbeddingsResponse(
-            embeddings=clean_repr,
-            text=request.text,
-            method="llm_generated"
-        )
-        
-    except Exception as e:
-        logger.error(f"Error generating embeddings: {e}")
-        raise HTTPException(status_code=500, detail=f"Embeddings generation failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

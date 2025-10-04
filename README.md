@@ -1,4 +1,9 @@
-# DistilGPT-2 LLM Backend Server
+# DistilGPT### Core Capabilities
+- **🧠 Lightweight Model**: DistilGPT-2 (82M parameters) optimized for text generation
+- **⚡ FastAPI Framework**: High-performance REST API with automatic documentation
+- **🎛️ Configurable Generation**: Adjustable parameters (temperature, top_p, max_tokens)
+- **📝 Streamlined Interfaces**: Text generation, completion, and chat optimized for DistilGPT-2
+- **🎯 Focused Performance**: Endpoints designed around model's core strengthsM Backend Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/Python-3.7+-3776AB.svg)](https://www.python.org/)
@@ -175,30 +180,50 @@ POST /generate
 }
 ```
 
-#### 🧠 Smart Q&A (Recommended)
+#### 🎯 Text Completion (Optimized for DistilGPT-2)
 ```http
-POST /ask
+POST /complete
 ```
 
 **Request Body:**
 ```json
 {
-  "question": "What is machine learning?",
-  "context": "technical explanation",
-  "max_length": 150
+  "prompt": "The benefits of machine learning include",
+  "max_tokens": 100,
+  "temperature": 0.7
 }
 ```
 
 **Response:**
 ```json
 {
-  "answer": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed for each task.",
-  "confidence": 0.87,
-  "question": "What is machine learning?",
-  "metadata": {
-    "response_type": "explanation",
-    "processing_time": 0.95
-  }
+  "prompt": "The benefits of machine learning include",
+  "completion": "improved efficiency in data analysis, automated decision-making processes, and the ability to identify patterns in large datasets that would be impossible for humans to detect manually.",
+  "raw_response": "The benefits of machine learning include improved efficiency in data analysis, automated decision-making processes, and the ability to identify patterns in large datasets that would be impossible for humans to detect manually."
+}
+```
+
+#### 💬 Chat Completions (OpenAI Compatible)
+```http
+POST /chat/completions
+```
+
+**Request Body:**
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Tell me about artificial intelligence"}
+  ],
+  "max_tokens": 150,
+  "temperature": 0.7
+}
+```
+
+**Response:**
+```json
+{
+  "content": "Artificial intelligence is a field of computer science focused on creating systems that can perform tasks typically requiring human intelligence.",
+  "role": "assistant"
 }
 ```
 
@@ -228,13 +253,24 @@ curl -X POST "http://localhost:8082/generate" \
      }'
 ```
 
-##### Q&A Endpoint
+##### Text Completion Endpoint
 ```bash
-curl -X POST "http://localhost:8082/ask" \
+curl -X POST "http://localhost:8082/complete" \
      -H "Content-Type: application/json" \
      -d '{
-       "question": "Explain neural networks briefly",
-       "max_length": 100
+       "prompt": "Neural networks are computational models that",
+       "max_tokens": 100,
+       "temperature": 0.7
+     }'
+```
+
+##### Chat Completions Endpoint
+```bash
+curl -X POST "http://localhost:8082/chat/completions" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "messages": [{"role": "user", "content": "Explain neural networks briefly"}],
+       "max_tokens": 100
      }'
 ```
 
@@ -643,8 +679,9 @@ Internet Traffic
 - `/health` - Health monitoring (bypasses IP restrictions)
 
 ##### **Internal Network Only** 
-- `/generate` - Text generation
-- `/ask` - Q&A processing
+- `/generate` - Text generation (primary strength)
+- `/complete` - Text completion (primary strength)
+- `/chat/completions` - Chat conversations (OpenAI compatible)
 - `/model-info` - Model information
 - `/docs` - API documentation
 
